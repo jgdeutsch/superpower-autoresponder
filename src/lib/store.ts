@@ -1,54 +1,61 @@
-import { readFile, writeFile, mkdir } from "fs/promises";
-import path from "path";
+import { put, list, del } from "@vercel/blob";
 import type { Rule, LogEntry } from "./types";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const RULES_FILE = path.join(DATA_DIR, "rules.json");
-const LOGS_FILE = path.join(DATA_DIR, "logs.json");
-const STATE_FILE = path.join(DATA_DIR, "state.json");
+const RULES_KEY = "rules.json";
+const LOGS_KEY = "logs.json";
+const STATE_KEY = "state.json";
 
-async function ensureDir() {
-  await mkdir(DATA_DIR, { recursive: true });
-}
-
-async function readJson<T>(file: string, fallback: T): Promise<T> {
+async function readBlob<T>(key: string, fallback: T): Promise<T> {
   try {
-    const data = await readFile(file, "utf-8");
-    return JSON.parse(data);
+    const { blobs } = await list({ prefix: key, limit: 1 });
+    if (blobs.length === 0) return fallback;
+    const res = await fetch(blobs[0].url);
+    return await res.json();
   } catch {
     return fallback;
   }
 }
 
-async function writeJson(file: string, data: unknown) {
-  await ensureDir();
-  await writeFile(file, JSON.stringify(data, null, 2));
+async function writeBlob(key: string, data: unknown) {
+  // Delete old blob first
+  try {
+    const { blobs } = await list({ prefix: key, limit: 1 });
+    if (blobs.length > 0) {
+      await del(blobs[0].url);
+    }
+  } catch {
+    // ignore
+  }
+  await put(key, JSON.stringify(data), {
+    access: "public",
+    addRandomSuffix: false,
+  });
 }
 
 export async function getRules(): Promise<Rule[]> {
-  return readJson(RULES_FILE, []);
+  return readBlob(RULES_KEY, []);
 }
 
 export async function saveRules(rules: Rule[]) {
-  await writeJson(RULES_FILE, rules);
+  await writeBlob(RULES_KEY, rules);
 }
 
 export async function getLogs(): Promise<LogEntry[]> {
-  return readJson(LOGS_FILE, []);
+  return readBlob(LOGS_KEY, []);
 }
 
 export async function addLog(entry: LogEntry) {
   const logs = await getLogs();
   logs.unshift(entry);
   if (logs.length > 200) logs.length = 200;
-  await writeJson(LOGS_FILE, logs);
+  await writeBlob(LOGS_KEY, logs);
 }
 
 export async function getLastProcessedHistoryId(): Promise<string | null> {
-  const state = await readJson<{ historyId?: string }>(STATE_FILE, {});
+  const state = await readBlob<{ historyId?: string }>(STATE_KEY, {});
   return state.historyId ?? null;
 }
 
 export async function setLastProcessedHistoryId(historyId: string) {
-  await writeJson(STATE_FILE, { historyId });
+  await writeBlob(STATE_KEY, { historyId });
 }
