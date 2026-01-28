@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getGmailClientFromRefresh, getRecentUnreadMessages, getMessageDetails, sendReply, markAsRead } from "@/lib/gmail";
+import { getGmailClientFromRefresh, getTodaysUnansweredMessages, getMessageDetails, sendReply, markAsRead } from "@/lib/gmail";
 import { generateReply } from "@/lib/gemini";
 import { emailMatchesRule } from "@/lib/engine";
 import { getRules, addLog } from "@/lib/store";
@@ -42,7 +42,7 @@ async function processEmails(refreshToken: string | undefined) {
 
   let messages;
   try {
-    messages = await getRecentUnreadMessages(gmail, 20);
+    messages = await getTodaysUnansweredMessages(gmail);
   } catch (err) {
     const error = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: "Failed to fetch emails", detail: error }, { status: 500 });
@@ -59,44 +59,41 @@ async function processEmails(refreshToken: string | undefined) {
     try {
       const email = await getMessageDetails(gmail, msg.id!);
 
-      const skippedSelf = email.from.includes("jeff@superpower.com");
       let matchedRule: string | null = null;
 
-      if (!skippedSelf) {
-        for (const rule of enabledRules) {
-          if (emailMatchesRule(rule, email)) {
-            matchedRule = rule.name;
-            const replyText = await generateReply(
-              email.from,
-              email.subject,
-              email.body,
-              rule.replyInstructions
-            );
+      for (const rule of enabledRules) {
+        if (emailMatchesRule(rule, email)) {
+          matchedRule = rule.name;
+          const replyText = await generateReply(
+            email.from,
+            email.subject,
+            email.body,
+            rule.replyInstructions
+          );
 
-            await sendReply(gmail, email.threadId, email.from, email.subject, replyText, email.messageId, email.references);
-            await markAsRead(gmail, email.id);
+          await sendReply(gmail, email.threadId, email.from, email.subject, replyText, email.messageId, email.references);
+          await markAsRead(gmail, email.id);
 
-            const log: LogEntry = {
-              id: crypto.randomUUID(),
-              timestamp: new Date().toISOString(),
-              emailFrom: email.from,
-              emailSubject: email.subject,
-              ruleId: rule.id,
-              ruleName: rule.name,
-              replySent: replyText,
-              status: "sent",
-            };
-            await addLog(log);
-            processed++;
-            break;
-          }
+          const log: LogEntry = {
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString(),
+            emailFrom: email.from,
+            emailSubject: email.subject,
+            ruleId: rule.id,
+            ruleName: rule.name,
+            replySent: replyText,
+            status: "sent",
+          };
+          await addLog(log);
+          processed++;
+          break;
         }
       }
 
       debug.emails.push({
         from: email.from,
         subject: email.subject,
-        skippedSelf,
+        skippedSelf: false,
         matchedRule,
       });
     } catch (err) {

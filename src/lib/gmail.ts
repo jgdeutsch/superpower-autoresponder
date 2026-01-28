@@ -18,16 +18,45 @@ export function getGmailClientFromRefresh(refreshToken: string) {
   return google.gmail({ version: "v1", auth });
 }
 
-export async function getRecentUnreadMessages(
+export async function getTodaysUnansweredMessages(
   gmail: ReturnType<typeof google.gmail>,
-  maxResults = 10
+  maxResults = 50
 ) {
+  const today = new Date();
+  const yyyy = today.getUTCFullYear();
+  const mm = today.getUTCMonth() + 1;
+  const dd = today.getUTCDate();
+  const dateStr = `${yyyy}/${mm}/${dd}`;
+
+  // Get today's inbox emails not sent by me
   const res = await gmail.users.messages.list({
     userId: "me",
-    q: "is:unread is:inbox",
+    q: `in:inbox after:${dateStr} -from:me`,
     maxResults,
   });
-  return res.data.messages ?? [];
+  const messages = res.data.messages ?? [];
+
+  // Filter out messages that already have a reply from us in the thread
+  const unanswered: { id: string }[] = [];
+  for (const msg of messages) {
+    const thread = await gmail.users.threads.get({
+      userId: "me",
+      id: msg.threadId!,
+      format: "metadata",
+      metadataHeaders: ["From"],
+    });
+    const threadMessages = thread.data.messages ?? [];
+    const weReplied = threadMessages.some((m) => {
+      const fromHeader = m.payload?.headers?.find(
+        (h) => h.name?.toLowerCase() === "from"
+      )?.value ?? "";
+      return fromHeader.includes("jeff@superpower.com");
+    });
+    if (!weReplied) {
+      unanswered.push({ id: msg.id! });
+    }
+  }
+  return unanswered;
 }
 
 export async function getMessageDetails(
