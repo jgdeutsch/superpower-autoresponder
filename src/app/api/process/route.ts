@@ -73,7 +73,7 @@ async function processEmails(refreshToken: string | undefined) {
               rule.replyInstructions
             );
 
-            await sendReply(gmail, email.threadId, email.from, email.subject, replyText);
+            await sendReply(gmail, email.threadId, email.from, email.subject, replyText, email.messageId, email.references);
             await markAsRead(gmail, email.id);
 
             const log: LogEntry = {

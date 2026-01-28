@@ -59,6 +59,8 @@ export async function getMessageDetails(
   return {
     id: res.data.id!,
     threadId: res.data.threadId!,
+    messageId: getHeader("Message-ID") || getHeader("Message-Id"),
+    references: getHeader("References"),
     from: getHeader("From"),
     to: getHeader("To"),
     subject: getHeader("Subject"),
@@ -74,14 +76,17 @@ export async function sendReply(
   to: string,
   subject: string,
   body: string,
-  messageId?: string
+  inReplyToMessageId?: string,
+  existingReferences?: string
 ) {
   const replySubject = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
+  // Build References: existing references + the message we're replying to
+  const refs = [existingReferences, inReplyToMessageId].filter(Boolean).join(" ");
   const rawParts = [
     `To: ${to}`,
     `Subject: ${replySubject}`,
-    `In-Reply-To: ${messageId ?? ""}`,
-    `References: ${messageId ?? ""}`,
+    `In-Reply-To: ${inReplyToMessageId ?? ""}`,
+    `References: ${refs}`,
     `Content-Type: text/plain; charset="UTF-8"`,
     "",
     body,
