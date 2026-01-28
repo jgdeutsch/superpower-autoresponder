@@ -81,7 +81,7 @@ export default function Dashboard() {
     try {
       const res = await fetch("/api/process", { method: "POST" });
       const data = await res.json();
-      alert(`Processed ${data.processed} emails`);
+      alert(JSON.stringify(data, null, 2));
       loadLogs();
     } catch {
       alert("Error processing emails");

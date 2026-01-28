@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
 async function processEmails(refreshToken: string | undefined) {
   if (!refreshToken) {
-    return NextResponse.json({ error: "No refresh token available" }, { status: 400 });
+    return NextResponse.json({ error: "No refresh token available", debug: "refreshToken is undefined" }, { status: 400 });
   }
 
   const gmail = getGmailClientFromRefresh(refreshToken);
@@ -40,42 +40,65 @@ async function processEmails(refreshToken: string | undefined) {
     return NextResponse.json({ message: "No enabled rules", processed: 0 });
   }
 
-  const messages = await getRecentUnreadMessages(gmail, 20);
+  let messages;
+  try {
+    messages = await getRecentUnreadMessages(gmail, 20);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: "Failed to fetch emails", detail: error }, { status: 500 });
+  }
+
+  const debug: { totalUnread: number; emails: { from: string; subject: string; skippedSelf: boolean; matchedRule: string | null }[] } = {
+    totalUnread: messages.length,
+    emails: [],
+  };
+
   let processed = 0;
 
   for (const msg of messages) {
     try {
       const email = await getMessageDetails(gmail, msg.id!);
 
-      if (email.from.includes("jeff@superpower.com")) continue;
+      const skippedSelf = email.from.includes("jeff@superpower.com");
+      let matchedRule: string | null = null;
 
-      for (const rule of enabledRules) {
-        if (emailMatchesRule(rule, email)) {
-          const replyText = await generateReply(
-            email.from,
-            email.subject,
-            email.body,
-            rule.replyInstructions
-          );
+      if (!skippedSelf) {
+        for (const rule of enabledRules) {
+          if (emailMatchesRule(rule, email)) {
+            matchedRule = rule.name;
+            const replyText = await generateReply(
+              email.from,
+              email.subject,
+              email.body,
+              rule.replyInstructions
+            );
 
-          await sendReply(gmail, email.threadId, email.from, email.subject, replyText);
-          await markAsRead(gmail, email.id);
+            await sendReply(gmail, email.threadId, email.from, email.subject, replyText);
+            await markAsRead(gmail, email.id);
 
-          const log: LogEntry = {
-            id: crypto.randomUUID(),
-            timestamp: new Date().toISOString(),
-            emailFrom: email.from,
-            emailSubject: email.subject,
-            ruleId: rule.id,
-            ruleName: rule.name,
-            replySent: replyText,
-            status: "sent",
-          };
-          await addLog(log);
-          processed++;
-          break;
+            const log: LogEntry = {
+              id: crypto.randomUUID(),
+              timestamp: new Date().toISOString(),
+              emailFrom: email.from,
+              emailSubject: email.subject,
+              ruleId: rule.id,
+              ruleName: rule.name,
+              replySent: replyText,
+              status: "sent",
+            };
+            await addLog(log);
+            processed++;
+            break;
+          }
         }
       }
+
+      debug.emails.push({
+        from: email.from,
+        subject: email.subject,
+        skippedSelf,
+        matchedRule,
+      });
     } catch (err) {
       const error = err instanceof Error ? err.message : "Unknown error";
       await addLog({
@@ -89,8 +112,9 @@ async function processEmails(refreshToken: string | undefined) {
         status: "error",
         error,
       });
+      debug.emails.push({ from: "error", subject: error, skippedSelf: false, matchedRule: null });
     }
   }
 
-  return NextResponse.json({ message: "Done", processed });
+  return NextResponse.json({ message: "Done", processed, debug });
 }
